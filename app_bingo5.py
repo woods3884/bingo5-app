@@ -29,9 +29,9 @@ def predict_numbers_by_ai(df):
     feature_cols = [col for col in df.columns if col.startswith('feature_')]
     latest_features = latest[feature_cols]
     model = joblib.load("model/bingo5_model.pkl")
-    probs = model.predict_proba(latest_features)
-    result = np.argsort(probs[0])[::-1][:8]
-    return sorted((result + 1).tolist())  # ← 修正済み
+    probs = model.predict_proba(latest_features)[0]  # shape: (40,)
+    top8 = np.argsort(probs)[::-1][:8]  # 上位8個の数字（0-index）
+    return sorted([n + 1 for n in top8])  # 1-index にしてソート
 
 # --- 頻出数字 ---
 def get_frequent_numbers(df):
