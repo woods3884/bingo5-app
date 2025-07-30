@@ -20,21 +20,22 @@ def create_features(df):
     for i in range(1, 9):
         df_feat[f"num{i}"] = df_feat[f"数字{i}"]
     for i in range(1, 41):
-        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(lambda row: int(i in row.values), axis=1)
+        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(
+            lambda row: int(i in row.values), axis=1
+        )
     return df_feat
 
-# --- AI予測 ---
+# --- AI予測（修正版） ---
 def predict_numbers_by_ai(df):
     latest = df.iloc[[-1]]
     feature_cols = [col for col in df.columns if col.startswith('feature_')]
-    latest_features = latest[feature_cols]
+    latest_features = latest[feature_cols].values  # ndarray に変換
     model = joblib.load("model/bingo5_model.pkl")
 
-    # 予測確率から上位8個の数字（1〜40）を取得
-    probs = model.predict_proba(latest_features)[0]
+    probs = model.predict_proba(latest_features).reshape(-1)  # shape (40,)
     top8 = np.argsort(probs)[::-1][:8]
-    result = [int(n + 1) for n in top8]  # 0-index → 1-index に変換し整数化
-    return sorted(result)
+    result = sorted([int(n + 1) for n in top8])  # 0-index → 1-index
+    return result
 
 # --- 頻出数字取得 ---
 def get_frequent_numbers(df):
