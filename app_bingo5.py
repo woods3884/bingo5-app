@@ -29,11 +29,14 @@ def predict_numbers_by_ai(df):
     feature_cols = [col for col in df.columns if col.startswith('feature_')]
     latest_features = latest[feature_cols]
     model = joblib.load("model/bingo5_model.pkl")
-    probs = model.predict_proba(latest_features)[0]  # shape: (40,)
-    top8 = np.argsort(probs)[::-1][:8]  # 上位8個の数字（0-index）
-    return sorted([n + 1 for n in top8])  # 1-index にしてソート
 
-# --- 頻出数字 ---
+    # 予測確率から上位8個の数字（1〜40）を取得
+    probs = model.predict_proba(latest_features)[0]
+    top8 = np.argsort(probs)[::-1][:8]
+    result = [int(n + 1) for n in top8]  # 0-index → 1-index に変換し整数化
+    return sorted(result)
+
+# --- 頻出数字取得 ---
 def get_frequent_numbers(df):
     numbers = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
     return Counter(numbers)
@@ -77,7 +80,7 @@ if st.button("📋 おすすめ数字を5口生成"):
         except Exception as e:
             st.error(f"AI予測時にエラーが発生しました: {e}")
 
-# --- 可視化オプション ---
+# --- 頻出数字の可視化 ---
 if logic == "頻出数字":
     st.markdown("## 🔢 頻出数字ランキング")
     df = load_data()
