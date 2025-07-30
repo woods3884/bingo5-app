@@ -20,22 +20,25 @@ def create_features(df):
     for i in range(1, 9):
         df_feat[f"num{i}"] = df_feat[f"数字{i}"]
     for i in range(1, 41):
-        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(
-            lambda row: int(i in row.values), axis=1
-        )
+        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(lambda row: int(i in row.values), axis=1)
     return df_feat
 
-# --- AI予測（修正版） ---
+# --- AI予測 ---
 def predict_numbers_by_ai(df):
     latest = df.iloc[[-1]]
     feature_cols = [col for col in df.columns if col.startswith('feature_')]
-    latest_features = latest[feature_cols].values  # ndarray に変換
-    model = joblib.load("model/bingo5_model.pkl")
+    latest_features = latest[feature_cols].values
 
-    probs = model.predict_proba(latest_features).reshape(-1)  # shape (40,)
-    top8 = np.argsort(probs)[::-1][:8]
-    result = sorted([int(n + 1) for n in top8])  # 0-index → 1-index
-    return result
+    model = joblib.load("model/bingo5_model.pkl")
+    probs_list = model.predict_proba(latest_features)
+
+    # 各出力に対して最も確率の高いインデックスを取得（0-index → 1-indexに変換）
+    predicted_numbers = []
+    for probs in probs_list:
+        max_index = np.argmax(probs[0])
+        predicted_numbers.append(max_index + 1)
+
+    return sorted(predicted_numbers)
 
 # --- 頻出数字取得 ---
 def get_frequent_numbers(df):
