@@ -1,3 +1,5 @@
 streamlit
 pandas
-matplotlib
+lightgbm
+scikit-learn  # ← この行を追加
+
