@@ -1,21 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import random
-import os
 import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
 from collections import Counter
 
-# --- モデルの読み込み ---
-@st.cache_resource
-def load_model():
-    model_path = "model/bingo5_model.pkl"
-    if os.path.exists(model_path):
-        return joblib.load(model_path)
-    return None
-
-# --- データの読み込み ---
+# --- データ読み込み ---
 @st.cache_data
 def load_data():
     df = pd.read_csv("data/date_bingo5.csv")
@@ -23,89 +14,76 @@ def load_data():
     df = df.sort_values("抽せん日", ascending=False)
     return df
 
-# --- 頻出数字 ---
-def show_frequent_numbers(df):
-    nums = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
-    counter = Counter(nums)
-    most_common = counter.most_common()
-
-    st.subheader("📈 頻出数字ランキング")
-    fig, ax = plt.subplots()
-    ax.bar([num for num, _ in most_common], [count for _, count in most_common])
-    ax.set_xlabel("数字")
-    ax.set_ylabel("出現回数")
-    st.pyplot(fig)
-
-# --- 未出数字 ---
-def show_unshown_numbers(df):
-    all_numbers = set(range(1, 41))
-    appeared = set(df[[f"数字{i}" for i in range(1, 9)]].values.flatten())
-    unshown = sorted(list(all_numbers - appeared))
-    st.subheader("⚫ 未出数字")
-    st.write(unshown)
-
-# --- 連番傾向 ---
-def show_consecutive_pattern(df):
-    st.subheader("🔢 連番傾向")
-    count = 0
-    for _, row in df.iterrows():
-        nums = sorted(row[[f"数字{i}" for i in range(1, 9)]].values)
-        for i in range(len(nums) - 1):
-            if nums[i] + 1 == nums[i + 1]:
-                count += 1
-                break
-    st.write(f"連番が含まれる回数: {count} / {len(df)}")
+# --- 特徴量作成 ---
+def create_features(df):
+    df_feat = df.copy()
+    for i in range(1, 9):
+        df_feat[f"num{i}"] = df_feat[f"数字{i}"]
+    for i in range(1, 41):
+        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(lambda row: int(i in row.values), axis=1)
+    return df_feat
 
 # --- AI予測 ---
-def show_ai_predictions(df, model):
-    st.subheader("🤖 おすすめ数字（5口）")
+def predict_numbers_by_ai(df):
+    latest = df.iloc[[-1]]
+    feature_cols = [col for col in df.columns if col.startswith('feature_')]
+    latest_features = latest[feature_cols]
+    model = joblib.load("model/bingo5_model.pkl")
+    probs = model.predict_proba(latest_features)
+    result = np.argsort(probs[0])[::-1][:8]
+    return sorted(result + 1)  # 0-index → 1-40に調整
 
-    try:
-        X = []
-        for _, row in df.iterrows():
-            nums = row[[f"数字{i}" for i in range(1, 9)]].values
-            features = []
-            features.append(np.mean(nums))
-            features.append(np.std(nums))
-            features.append(sum(n % 2 == 0 for n in nums))  # 偶数の数
-            features.append(sum(n % 2 != 0 for n in nums))  # 奇数の数
-            features.extend(nums)
-            X.append(features)
+# --- 頻出数字 ---
+def get_frequent_numbers(df):
+    numbers = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
+    return Counter(numbers)
 
-        X = np.array(X)
-        latest_X = X[:10]  # 最新10件分で生成
+# --- Streamlit UI ---
+st.title("🎯 ビンゴ5出現数字おすすめジェネレーター")
 
-        for i in range(5):
-            preds = model.predict(latest_X)
-            pred_numbers = list(sorted(set(preds[i % len(preds)])))[:8]
-            st.write(f"👉 {i+1}口目: {pred_numbers}")
+logic = st.selectbox(
+    "🧊 推奨数字の生成ロジックを選んでください：",
+    ["頻出数字", "未出数字", "ランダム", "AI予測（学習モデル活用）"]
+)
 
-    except Exception as e:
-        st.error(f"AI予測時にエラーが発生しました: {e}")
+if st.button("📋 おすすめ数字を5口生成"):
+    st.markdown("### 🎯 おすすめ数字（5口）")
+    df_raw = load_data()
+    df_feat = create_features(df_raw)
 
-# --- メインアプリ ---
-st.title(" 🎯 ビンゴ5出現数字おすすめジェネレーター")
+    for i in range(5):
+        try:
+            if logic == "頻出数字":
+                freq = get_frequent_numbers(df_raw)
+                top8 = [num for num, _ in freq.most_common(8)]
+                result = sorted(np.random.choice(top8, 8, replace=False).tolist())
 
-logic_option = st.selectbox("🕹️ 推奨数字の生成ロジックを選んでください：", [
-    "頻出数字",
-    "未出数字",
-    "連番傾向",
-    "AI予測（学習モデル活用）"
-])
+            elif logic == "未出数字":
+                all_nums = set(range(1, 41))
+                used_nums = set(df_raw[[f"数字{i}" for i in range(1, 9)]].values.flatten())
+                unused = list(all_nums - used_nums)
+                if len(unused) < 8:
+                    unused += list(all_nums)
+                result = sorted(np.random.choice(unused, 8, replace=False).tolist())
 
-st.markdown("---")
+            elif logic == "ランダム":
+                result = sorted(np.random.choice(range(1, 41), 8, replace=False).tolist())
 
-model = load_model()
-df = load_data()
+            elif logic == "AI予測（学習モデル活用）":
+                result = predict_numbers_by_ai(df_feat)
 
-if logic_option == "頻出数字":
-    show_frequent_numbers(df)
-elif logic_option == "未出数字":
-    show_unshown_numbers(df)
-elif logic_option == "連番傾向":
-    show_consecutive_pattern(df)
-elif logic_option == "AI予測（学習モデル活用）":
-    if model is not None:
-        show_ai_predictions(df, model)
-    else:
-        st.error("学習済みモデルが見つかりませんでした。model/bingo5_model.pkl を確認してください。")
+            st.write(f"👉 {i+1}口目: {result}")
+
+        except Exception as e:
+            st.error(f"AI予測時にエラーが発生しました: {e}")
+
+# --- 可視化オプション ---
+if logic == "頻出数字":
+    st.markdown("## 🔢 頻出数字ランキング")
+    df = load_data()
+    freq = get_frequent_numbers(df)
+    freq_df = pd.DataFrame(freq.items(), columns=["数字", "出現回数"]).sort_values("数字")
+    plt.figure(figsize=(10, 4))
+    sns.barplot(x="数字", y="出現回数", data=freq_df, color="skyblue")
+    plt.xticks(rotation=90)
+    st.pyplot(plt)
