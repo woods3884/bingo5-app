@@ -2,6 +2,6 @@ streamlit
 pandas
 lightgbm
 scikit-learn
-matplotlib
+matplotlib  ← 必ず含まれていること！
 
 
