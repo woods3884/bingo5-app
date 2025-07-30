@@ -24,17 +24,19 @@ def create_features(df):
     return df_feat
 
 # --- AI予測 ---
-def predict_numbers_by_ai(df):
-    latest = df.iloc[[-1]]
-    feature_cols = [col for col in df.columns if col.startswith('feature_')]
-    latest_features = latest[feature_cols]
+def predict_numbers_by_ai(df_feat):
+    latest = df_feat.iloc[[-1]]
+    feature_cols = [col for col in df_feat.columns if col.startswith('feature_')]
+    latest_features = latest[feature_cols].values  # ndarrayに変換（reshape問題を防ぐ）
+
     model = joblib.load("model/bingo5_model.pkl")
 
-    # 予測確率から上位8個の数字（1〜40）を取得
-    probs = model.predict_proba(latest_features)[0]
-    top8 = np.argsort(probs)[::-1][:8]
-    result = sorted([int(n + 1) for n in top8])  # int化して1-index
-    return result
+    # 各数字（1〜40）の「1になる確率」を取得
+    probs = model.predict_proba(latest_features)
+    probs_1 = np.array([p[1] for p in probs])  # 各次元で1の確率を抽出
+
+    top8 = np.argsort(probs_1)[::-1][:8]
+    return sorted([int(n + 1) for n in top8])  # 1-indexに変換しint化
 
 # --- 頻出数字取得 ---
 def get_frequent_numbers(df):
@@ -75,8 +77,7 @@ if st.button("📋 おすすめ数字を5口生成"):
             elif logic == "AI予測（学習モデル活用）":
                 result = predict_numbers_by_ai(df_feat)
 
-            # 明示的にint化して表示
-            st.write(f"👉 {i+1}口目: {list(map(int, result))}")
+            st.write(f"👉 {i+1}口目: {result}")
 
         except Exception as e:
             st.error(f"AI予測時にエラーが発生しました: {e}")
