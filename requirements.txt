@@ -2,6 +2,8 @@ streamlit
 pandas
 lightgbm
 scikit-learn
-matplotlib  ← 必ず含まれていること！
+matplotlib
+seaborn      ← ★これを追加
+
 
 
