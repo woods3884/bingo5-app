@@ -3,90 +3,100 @@ import pandas as pd
 import numpy as np
 import random
 import os
-import pickle
+import joblib
 from sklearn.preprocessing import MultiLabelBinarizer
 
-# --- データ読み込み ---
-DATA_PATH = "data/date_bingo5.csv"
-MODEL_PATH = "model/bingo5_model.pkl"
-
+# CSV 読み込み関数（列名変換を含む）
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv("data/date_bingo5.csv")
+    df.rename(columns={"抽せん日": "抽選日"}, inplace=True)  # 列名変換
     df = df.sort_values("抽選日", ascending=False)
-    df.reset_index(drop=True, inplace=True)
     return df
 
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        with open(MODEL_PATH, "rb") as f:
-            return pickle.load(f)
-    else:
-        return None
+# 出現頻度をカウント
+def get_frequency(df):
+    nums = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
+    return pd.Series(nums).value_counts().sort_index()
 
-# --- 数字生成ロジック ---
-def generate_random_numbers():
-    return sorted(random.sample(range(1, 40), 8))
+# 未出数字を抽出
+def get_unseen_numbers(df):
+    all_nums = set(range(1, 41))
+    seen = set(df[[f"数字{i}" for i in range(1, 9)]].values.flatten())
+    return sorted(all_nums - seen)
 
-def generate_from_freq(df):
-    all_nums = df[[f"num{i}" for i in range(1, 9)]].values.flatten()
-    freq = pd.Series(all_nums).value_counts().sort_values(ascending=False)
-    top20 = freq.head(20).index.tolist()
-    return sorted(random.sample(top20, 8))
+# 連番ペアを抽出（例: 12と13など）
+def get_consecutive_pairs(df):
+    pairs = []
+    for row in df[[f"数字{i}" for i in range(1, 9)]].values:
+        row = sorted(row)
+        for i in range(len(row)-1):
+            if row[i+1] - row[i] == 1:
+                pairs.append((row[i], row[i+1]))
+    return pairs
 
-def generate_from_unseen(df):
-    all_history = df[[f"num{i}" for i in range(1, 9)]].values.flatten()
-    unseen = [n for n in range(1, 40) if n not in all_history]
-    pool = unseen if unseen else list(range(1, 40))
-    return sorted(random.sample(pool, 8))
+# AIモデルで予測（特徴量40次元）
+def predict_numbers_by_ai(model, df, n_sets=5):
+    results = []
+    feature_columns = [f"数字{i}" for i in range(1, 9)]
+    recent_draws = df[feature_columns].head(10).values
 
-def generate_ai_prediction(model, df):
-    try:
-        latest = df.sort_values('抽選日', ascending=False).head(4)
-        latest_numbers = latest[[f'num{i}' for i in range(1, 9)]].values.flatten()
-        features = [f'num{i}_t{j}' for j in range(1, 5) for i in range(1, 9)]
-        X_input = pd.DataFrame([latest_numbers], columns=features)
-        y_pred = model.predict(X_input)
-        mlb = MultiLabelBinarizer(classes=list(range(1, 40)))
-        mlb.fit([[]])
-        y_decoded = mlb.inverse_transform(y_pred)
-        return sorted(list(y_decoded[0]))
-    except Exception as e:
-        return f"AI予測時にエラーが発生しました: {e}"
+    for _ in range(n_sets):
+        try:
+            x_input = recent_draws.flatten()
+            if len(x_input) != 80:
+                raise ValueError("特徴量数が80個ではありません（8列×10行）")
 
-# --- Streamlit UI ---
+            # 特徴量として上位40個の出現数を使用
+            freq = pd.Series(x_input).value_counts().sort_index()
+            all_features = [freq.get(i, 0) for i in range(1, 41)]
+
+            probs = model.predict_proba([all_features])
+            if isinstance(probs, list):
+                probs = np.array([p[:, 1] for p in probs]).T
+
+            top = np.argsort(-probs[0])[:8]
+            numbers = sorted([i+1 for i in top])
+            results.append(numbers)
+
+        except Exception as e:
+            st.warning(f"AI予測時にエラーが発生しました: {e}")
+            results.append([])
+
+    return results
+
+# Streamlit UI
 st.title("🎯 ビンゴ5出現数字おすすめジェネレーター")
 
-st.markdown("""
-- 推奨数字の生成ロジックを選んでください：
-""")
+logic = st.selectbox("🎲 推奨数字の生成ロジックを選んでください：", ["頻出数字", "未出数字", "連番傾向", "AI予測（学習モデル活用）"])
 
-logic = st.selectbox("",
-                     ["ランダム生成（完全ランダム）",
-                      "頻出数字ベース（過去データ）",
-                      "未出数字ベース（過去データ）",
-                      "AI予測（学習モデル活用）"])
+if logic == "AI予測（学習モデル活用）":
+    if st.button("📄 おすすめ数字を5口生成"):
+        df = load_data()
+        model_path = "model/bingo5_model.pkl"
+        if os.path.exists(model_path):
+            model = joblib.load(model_path)
+            predicted = predict_numbers_by_ai(model, df, n_sets=5)
+            st.markdown("## 🎯 おすすめ数字（5口）")
+            for i, nums in enumerate(predicted, 1):
+                st.write(f"👉 {i}口目: {nums}")
+        else:
+            st.warning("学習済みモデルが見つかりません。")
 
-st.markdown("---")
-
-if st.button("📋 おすすめ数字を5口生成"):
+elif logic == "頻出数字":
     df = load_data()
-    model = load_model() if logic == "AI予測（学習モデル活用）" else None
+    st.markdown("## 🔢 頻出数字ランキング")
+    freq = get_frequency(df)
+    st.bar_chart(freq)
 
-    st.subheader("🎯 おすすめ数字（5口）")
-    for i in range(5):
-        if logic == "ランダム生成（完全ランダム）":
-            nums = generate_random_numbers()
-        elif logic == "頻出数字ベース（過去データ）":
-            nums = generate_from_freq(df)
-        elif logic == "未出数字ベース（過去データ）":
-            nums = generate_from_unseen(df)
-        elif logic == "AI予測（学習モデル活用)":
-            nums = generate_ai_prediction(model, df)
-        else:
-            nums = []
+elif logic == "未出数字":
+    df = load_data()
+    unseen = get_unseen_numbers(df)
+    st.markdown("## ❌ 未出数字一覧")
+    st.write(unseen)
 
-        if isinstance(nums, str):
-            st.error(nums)
-        else:
-            st.write(f"👉 {i+1}口目: {nums}")
+elif logic == "連番傾向":
+    df = load_data()
+    pairs = get_consecutive_pairs(df)
+    st.markdown("## 🔗 連番ペア出現履歴")
+    st.write(pairs)
