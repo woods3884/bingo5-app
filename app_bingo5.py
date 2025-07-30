@@ -1,87 +1,92 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import random
 import os
-import joblib
-from collections import Counter
+import pickle
+from sklearn.preprocessing import MultiLabelBinarizer
 
-st.title("\U0001F3AF ビンゴ5出現数字おすすめジェネレーター")
-
+# --- データ読み込み ---
 DATA_PATH = "data/date_bingo5.csv"
 MODEL_PATH = "model/bingo5_model.pkl"
 
-if not os.path.exists(DATA_PATH):
-    st.error("CSVファイルが存在しません。")
-else:
+@st.cache_data
+def load_data():
     df = pd.read_csv(DATA_PATH)
+    df = df.sort_values("抽選日", ascending=False)
+    df.reset_index(drop=True, inplace=True)
+    return df
 
-    # 1. 全出現数字をリスト化
-    all_drawn_numbers = df[[f"数字{i+1}" for i in range(8)]].values.flatten()
-    all_drawn_numbers = pd.Series(all_drawn_numbers).dropna().astype(int)
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, "rb") as f:
+            return pickle.load(f)
+    else:
+        return None
 
-    # 2. 頻出ランキング
-    freq_counter = Counter(all_drawn_numbers)
-    most_common = [num for num, _ in freq_counter.most_common()]
+# --- 数字生成ロジック ---
+def generate_random_numbers():
+    return sorted(random.sample(range(1, 40), 8))
 
-    # 3. 未出数字（1〜40で1度も出てない）
-    missing_numbers = [i for i in range(1, 41) if i not in all_drawn_numbers.values]
+def generate_from_freq(df):
+    all_nums = df[[f"num{i}" for i in range(1, 9)]].values.flatten()
+    freq = pd.Series(all_nums).value_counts().sort_values(ascending=False)
+    top20 = freq.head(20).index.tolist()
+    return sorted(random.sample(top20, 8))
 
-    # 4. セレクトボックスでロジック選択
-    logic = st.selectbox("🧠 推奨数字の生成ロジックを選んでください：", [
-        "頻出数字ベース",
-        "未出数字ベース",
-        "連番重視ベース",
-        "AI予測（学習モデル活用）"
-    ])
+def generate_from_unseen(df):
+    all_history = df[[f"num{i}" for i in range(1, 9)]].values.flatten()
+    unseen = [n for n in range(1, 40) if n not in all_history]
+    pool = unseen if unseen else list(range(1, 40))
+    return sorted(random.sample(pool, 8))
 
-    def generate_recommendation(logic):
-        if logic == "頻出数字ベース":
-            return sorted(random.sample(most_common[:20], 8))
+def generate_ai_prediction(model, df):
+    try:
+        latest = df.sort_values('抽選日', ascending=False).head(4)
+        latest_numbers = latest[[f'num{i}' for i in range(1, 9)]].values.flatten()
+        features = [f'num{i}_t{j}' for j in range(1, 5) for i in range(1, 9)]
+        X_input = pd.DataFrame([latest_numbers], columns=features)
+        y_pred = model.predict(X_input)
+        mlb = MultiLabelBinarizer(classes=list(range(1, 40)))
+        mlb.fit([[]])
+        y_decoded = mlb.inverse_transform(y_pred)
+        return sorted(list(y_decoded[0]))
+    except Exception as e:
+        return f"AI予測時にエラーが発生しました: {e}"
 
-        elif logic == "未出数字ベース":
-            if len(missing_numbers) >= 8:
-                return sorted(random.sample(missing_numbers, 8))
-            else:
-                others = [i for i in range(1, 41) if i not in missing_numbers]
-                fill = random.sample(others, 8 - len(missing_numbers))
-                return sorted(missing_numbers + fill)
+# --- Streamlit UI ---
+st.title("🎯 ビンゴ5出現数字おすすめジェネレーター")
 
-        elif logic == "連番重視ベース":
+st.markdown("""
+- 推奨数字の生成ロジックを選んでください：
+""")
+
+logic = st.selectbox("",
+                     ["ランダム生成（完全ランダム）",
+                      "頻出数字ベース（過去データ）",
+                      "未出数字ベース（過去データ）",
+                      "AI予測（学習モデル活用）"])
+
+st.markdown("---")
+
+if st.button("📋 おすすめ数字を5口生成"):
+    df = load_data()
+    model = load_model() if logic == "AI予測（学習モデル活用）" else None
+
+    st.subheader("🎯 おすすめ数字（5口）")
+    for i in range(5):
+        if logic == "ランダム生成（完全ランダム）":
+            nums = generate_random_numbers()
+        elif logic == "頻出数字ベース（過去データ）":
+            nums = generate_from_freq(df)
+        elif logic == "未出数字ベース（過去データ）":
+            nums = generate_from_unseen(df)
+        elif logic == "AI予測（学習モデル活用)":
+            nums = generate_ai_prediction(model, df)
+        else:
             nums = []
-            base = random.randint(1, 39)
-            nums += [base, base+1]
-            remain = [i for i in range(1, 41) if i not in nums]
-            nums += random.sample(remain, 6)
-            return sorted(nums)
 
-        elif logic == "AI予測（学習モデル活用）":
-            return predict_with_model(df)
-
-    def predict_with_model(df, n_predictions=5):
-        try:
-            if df.shape[0] < 10:
-                st.warning("AI予測に必要な過去データが10件未満のため、予測できません。")
-                return []
-
-            if not os.path.exists(MODEL_PATH):
-                st.warning("学習済みモデルが見つかりません。")
-                return []
-
-            model = joblib.load(MODEL_PATH)
-
-            latest_data = df.iloc[-10:][[f"数字{i+1}" for i in range(8)]].values
-            latest_features = latest_data.flatten().reshape(1, -1)
-
-            y_pred = model.predict(latest_features)
-            pred_indices = list(y_pred[0].argsort()[-8:][::-1])
-            return sorted([i+1 for i in pred_indices])
-
-        except Exception as e:
-            st.error(f"AI予測時にエラーが発生しました: {e}")
-            return []
-
-    if st.button("\U0001F4BE おすすめ数字を5口生成"):
-        st.subheader("\U0001F3AF おすすめ数字（5口）")
-        for i in range(5):
-            numbers = generate_recommendation(logic)
-            st.write(f"👉 {i+1}口目: {numbers}")
+        if isinstance(nums, str):
+            st.error(nums)
+        else:
+            st.write(f"👉 {i+1}口目: {nums}")
