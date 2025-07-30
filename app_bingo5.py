@@ -31,7 +31,7 @@ def predict_numbers_by_ai(df):
     model = joblib.load("model/bingo5_model.pkl")
     probs = model.predict_proba(latest_features)
     result = np.argsort(probs[0])[::-1][:8]
-    return sorted(result + 1)  # 0-index → 1-40に調整
+    return sorted((result + 1).tolist())  # ← 修正済み
 
 # --- 頻出数字 ---
 def get_frequent_numbers(df):
