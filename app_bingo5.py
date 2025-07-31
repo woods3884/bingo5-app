@@ -25,18 +25,19 @@ def create_features(df):
 
 # --- AI予測 ---
 def predict_numbers_by_ai(df):
-    latest = df.iloc[[-1]]
     feature_cols = [col for col in df.columns if col.startswith('feature_')]
-    latest_features = latest[feature_cols]
+    latest_features = df.iloc[[-1]][feature_cols]
     model = joblib.load("model/bingo5_model.pkl")
 
+    # 各数字に対する予測確率を取得
     probs = model.predict_proba(latest_features)
-    probs = np.array([p[1] for p in probs])  # クラス1の確率のみ取り出し
-    top8 = np.argsort(probs)[::-1][:8]
-    result = [int(n + 1) for n in top8]
-    return sorted(result)
 
-# --- 頻出数字取得 ---
+    # 各クラス（数字1～40）の「1である確率」を抽出
+    scores = np.array([p[0][1] for p in probs])
+    top8 = np.argsort(scores)[::-1][:8]
+    return sorted([int(n + 1) for n in top8])  # 0-index → 1-indexへ変換
+
+# --- 頻出数字集計 ---
 def get_frequent_numbers(df):
     numbers = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
     return Counter(numbers)
@@ -58,8 +59,8 @@ if st.button("📋 おすすめ数字を5口生成"):
         try:
             if logic == "頻出数字":
                 freq = get_frequent_numbers(df_raw)
-                nums, weights = zip(*sorted(freq.items()))
-                result = sorted(np.random.choice(nums, 8, replace=False, p=np.array(weights) / sum(weights)).tolist())
+                top8 = [num for num, _ in freq.most_common(8)]
+                result = sorted(np.random.choice(top8, 8, replace=False).tolist())
 
             elif logic == "未出数字":
                 all_nums = set(range(1, 41))
@@ -80,7 +81,7 @@ if st.button("📋 おすすめ数字を5口生成"):
         except Exception as e:
             st.error(f"AI予測時にエラーが発生しました: {e}")
 
-# --- 頻出数字の可視化 ---
+# --- 可視化（頻出） ---
 if logic == "頻出数字":
     st.markdown("## 🔢 頻出数字ランキング")
     df = load_data()
