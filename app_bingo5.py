@@ -30,14 +30,11 @@ def predict_numbers_by_ai(df):
     latest_features = latest[feature_cols]
     model = joblib.load("model/bingo5_model.pkl")
 
-    # 各数字（40個）の出現確率（スコア）取得
     probs = model.predict_proba(latest_features)
-    scores = np.array([p[0][1] for p in probs])  # 各数字の「出る確率」
-
-    # 確率に基づいて8個をランダムに選ぶ（重複なし）
-    numbers = np.arange(1, 41)
-    selected = np.random.choice(numbers, size=8, replace=False, p=scores / scores.sum())
-    return sorted(selected.tolist())
+    probs = np.array([p[1] for p in probs])  # クラス1の確率のみ取り出し
+    top8 = np.argsort(probs)[::-1][:8]
+    result = [int(n + 1) for n in top8]
+    return sorted(result)
 
 # --- 頻出数字取得 ---
 def get_frequent_numbers(df):
@@ -61,8 +58,8 @@ if st.button("📋 おすすめ数字を5口生成"):
         try:
             if logic == "頻出数字":
                 freq = get_frequent_numbers(df_raw)
-                top8 = [num for num, _ in freq.most_common(8)]
-                result = sorted(np.random.choice(top8, 8, replace=False).tolist())
+                nums, weights = zip(*sorted(freq.items()))
+                result = sorted(np.random.choice(nums, 8, replace=False, p=np.array(weights) / sum(weights)).tolist())
 
             elif logic == "未出数字":
                 all_nums = set(range(1, 41))
