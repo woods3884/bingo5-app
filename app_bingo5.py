@@ -1,92 +1,102 @@
-import streamlit as st
 import pandas as pd
-import numpy as np
-import joblib
+import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.font_manager as fm
+import matplotlib
+import base64
+import os
+from datetime import datetime
 from collections import Counter
+import random
+import chardet
 
-# --- データ読み込み ---
-@st.cache_data
-def load_data():
-    df = pd.read_csv("data/date_bingo5.csv")
-    df = df.rename(columns=lambda x: x.strip())
-    df = df.sort_values("抽せん日", ascending=False)
-    return df
+# --- フォント設定 ---
+font_path = "ipaexg.ttf"
+font_prop = fm.FontProperties(fname=font_path)
+matplotlib.rcParams['font.family'] = font_prop.get_name()
+plt.rcParams['font.family'] = font_prop.get_name()
 
-# --- 特徴量作成 ---
-def create_features(df):
-    df_feat = df.copy()
-    for i in range(1, 9):
-        df_feat[f"num{i}"] = df_feat[f"数字{i}"]
-    for i in range(1, 41):
-        df_feat[f"feature_{i}"] = df_feat[[f"num{j}" for j in range(1, 9)]].apply(lambda row: int(i in row.values), axis=1)
-    return df_feat
+# --- データフォルダ ---
+csv_folder = "data"
+os.makedirs(csv_folder, exist_ok=True)
 
-# --- AI予測 ---
-def predict_numbers_by_ai(df):
-    latest = df.iloc[[-1]]
-    feature_cols = [col for col in df.columns if col.startswith('feature_')]
-    latest_features = latest[feature_cols]
-    model = joblib.load("model/bingo5_model.pkl")
+# --- 📄 CSV読み込み関数 ---
+def read_csv_with_chardet(path):
+    with open(path, "rb") as f:
+        result = chardet.detect(f.read())
+    return pd.read_csv(path, encoding=result['encoding'])
 
-    probs = model.predict_proba(latest_features)[0]  # 各数字（1～40）に対する出現確率
-    top8 = np.argsort(probs)[::-1][:8]  # 上位8個のインデックス（0-indexed）
-    result = [int(n + 1) for n in top8]  # 1～40の実際の数字に変換
-    return result
+# --- 🎲 数字生成ロジック ---
+def generate_bingo5_numbers(df, logic="freq"):
+    if df.empty:
+        return []
 
-# --- 頻出数字 ---
-def get_frequent_numbers(df):
-    numbers = df[[f"数字{i}" for i in range(1, 9)]].values.flatten()
-    return Counter(numbers)
+    df = df.rename(columns={f"数字{i}" : f"num{i}" for i in range(1, 9)})
 
-# --- Streamlit UI ---
-st.title("🎯 ビンゴ5出現数字おすすめジェネレーター")
+    all_numbers = pd.Series(df[[f"num{i}" for i in range(1, 9)]].values.ravel())
+    freq = all_numbers.value_counts()
 
-logic = st.selectbox(
-    "🧊 推奨数字の生成ロジックを選んでください：",
-    ["頻出数字", "未出数字", "ランダム", "AI予測（学習モデル活用）"]
-)
+    if logic == "freq":
+        top_numbers = freq.head(25).index.tolist()
+        return [sorted(random.sample(top_numbers, 8)) for _ in range(5)]
+    elif logic == "least":
+        low_numbers = freq.tail(25).index.tolist()
+        return [sorted(random.sample(low_numbers, 8)) for _ in range(5)]
+    elif logic == "random":
+        return [sorted(random.sample(range(1, 41), 8)) for _ in range(5)]
+    else:
+        return []
 
-if st.button("📋 おすすめ数字を5口生成"):
-    st.markdown("### 🎯 おすすめ数字（5口）")
-    df_raw = load_data()
-    df_feat = create_features(df_raw)
+# --- 📄 PDF出力 ---
+def generate_pdf_report(recommendations, filename):
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
-    for i in range(5):
-        try:
-            if logic == "頻出数字":
-                freq = get_frequent_numbers(df_raw)
-                top8 = [num for num, _ in freq.most_common(8)]
-                result = sorted(np.random.choice(top8, 8, replace=False).tolist())
+    pdfmetrics.registerFont(UnicodeCIDFont('HeiseiKakuGo-W5'))
+    c = canvas.Canvas(filename, pagesize=A4)
+    width, height = A4
+    c.setFont('HeiseiKakuGo-W5', 14)
+    c.drawString(50, height - 50, "ビンゴ5 おすすめ数字 自動生成レポート")
 
-            elif logic == "未出数字":
-                all_nums = set(range(1, 41))
-                used_nums = set(df_raw[[f"数字{i}" for i in range(1, 9)]].values.flatten())
-                unused = list(all_nums - used_nums)
-                if len(unused) < 8:
-                    unused += list(all_nums)
-                result = sorted(np.random.choice(unused, 8, replace=False).tolist())
+    c.setFont('HeiseiKakuGo-W5', 12)
+    for i, line in enumerate(recommendations):
+        c.drawString(60, height - 100 - i * 20, f"{i+1}口目: {line}")
 
-            elif logic == "ランダム":
-                result = sorted(np.random.choice(range(1, 41), 8, replace=False).tolist())
+    c.save()
 
-            elif logic == "AI予測（学習モデル活用）":
-                result = predict_numbers_by_ai(df_feat)
-                np.random.shuffle(result)  # 表示順をシャッフル
+# --- Streamlit アプリ ---
+st.title("🎯 ビンゴ5 おすすめ数字自動生成ツール")
 
-            st.write(f"👉 {i+1}口目: {result}")
+csv_files = [f for f in os.listdir(csv_folder) if f.endswith(".csv")]
+months = sorted([f.replace(".csv", "") for f in csv_files], reverse=True)
+selected_month = st.selectbox("📅 使用する月データを選択", ["全データを使用"] + months)
 
-        except Exception as e:
-            st.error(f"AI予測時にエラーが発生しました: {e}")
+logic = st.selectbox("🧠 数字生成ロジックを選択", ["freq", "least", "random"])
 
-# --- 頻出数字グラフ ---
-if logic == "頻出数字":
-    st.markdown("## 🔢 頻出数字ランキング")
-    df = load_data()
-    freq = get_frequent_numbers(df)
-    freq_df = pd.DataFrame(freq.items(), columns=["数字", "出現回数"]).sort_values("数字")
-    plt.figure(figsize=(10, 4))
-    sns.barplot(x="数字", y="出現回数", data=freq_df, color="skyblue")
-    plt.xticks(rotation=90)
-    st.pyplot(plt)
+if selected_month == "全データを使用":
+    df_all = pd.concat([read_csv_with_chardet(os.path.join(csv_folder, f)) for f in csv_files], ignore_index=True)
+else:
+    csv_path = os.path.join(csv_folder, f"{selected_month}.csv")
+    df_all = read_csv_with_chardet(csv_path)
+
+if "recommendations" not in st.session_state:
+    st.session_state.recommendations = generate_bingo5_numbers(df_all, logic=logic)
+
+if st.button("🔁 おすすめ数字を再生成"):
+    st.session_state.recommendations = generate_bingo5_numbers(df_all, logic=logic)
+
+# 結果表示
+st.markdown("### 🎉 おすすめ数字（5口）")
+for i, nums in enumerate(st.session_state.recommendations, 1):
+    st.write(f"{i}口目: {nums}")
+
+# PDF出力
+pdf_filename = "bingo5_recommendation.pdf"
+generate_pdf_report(st.session_state.recommendations, pdf_filename)
+with open(pdf_filename, "rb") as f:
+    b64 = base64.b64encode(f.read()).decode()
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="{pdf_filename}">📄 PDFでダウンロード</a>'
+    st.markdown(href, unsafe_allow_html=True)
